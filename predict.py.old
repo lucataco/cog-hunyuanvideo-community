@@ -8,18 +8,9 @@ import torch
 import subprocess
 from diffusers.utils import export_to_video
 from diffusers import HunyuanVideoPipeline, HunyuanVideoTransformer3DModel
-import torch.distributed as dist
-from para_attn.context_parallel import init_context_parallel_mesh
-from para_attn.context_parallel.diffusers_adapters import parallelize_pipe
-from para_attn.parallel_vae.diffusers_adapters import parallelize_vae
-from para_attn.first_block_cache.diffusers_adapters import apply_cache_on_pipe
-
-
 
 MODEL_CACHE = "checkpoints"
 MODEL_URL = "https://weights.replicate.delivery/default/hunyuanvideo-community/HunyuanVideo/model.tar"
-
-torch.backends.cuda.enable_cudnn_sdp(False)
 
 def download_weights(url, dest):
     start = time.time()
@@ -29,9 +20,8 @@ def download_weights(url, dest):
     print("downloading took: ", time.time() - start)
 
 class Predictor(BasePredictor):
-    def setup(self, first_block_cache: bool = False) -> None:
-        dist.init_process_group(backend="nccl")
-        
+    def setup(self) -> None:
+        # Download weights
         if not os.path.exists(MODEL_CACHE):
             download_weights(MODEL_URL, MODEL_CACHE)
         
@@ -39,30 +29,14 @@ class Predictor(BasePredictor):
             MODEL_CACHE,
             subfolder="transformer",
             torch_dtype=torch.bfloat16,
-            revision="refs/pr/18"
         )
         self.pipe = HunyuanVideoPipeline.from_pretrained(
             MODEL_CACHE,
             transformer=self.transformer,
             torch_dtype=torch.float16,
-            revision="refs/pr/18"
-        ).to(f"cuda:{dist.get_rank()}")
-
-        if first_block_cache:
-            apply_cache_on_pipe(self.pipe)
-
+        )
         self.pipe.vae.enable_tiling()
-
-        mesh = init_context_parallel_mesh(
-            self.pipe.device.type,
-        )
-        parallelize_pipe(
-            self.pipe,
-            mesh=mesh,
-        )
-
-        parallelize_vae(self.pipe.vae, mesh=mesh._flatten())
-
+        self.pipe.to("cuda")
 
     def predict(
         self,
@@ -103,7 +77,7 @@ class Predictor(BasePredictor):
             seed = int.from_bytes(os.urandom(2), "big")
         print(f"Using seed: {seed}")
 
-        generator = torch.Generator(f"cuda:{dist.get_rank()}").manual_seed(seed)
+        generator = torch.Generator("cuda").manual_seed(seed)
 
         output = self.pipe(
             prompt=prompt,
@@ -113,7 +87,6 @@ class Predictor(BasePredictor):
             num_inference_steps=num_inference_steps,
             generator=generator,
             guidance_scale=guidance_scale,
-            output_type="pil" if dist.get_rank() == 0 else "pt",
         ).frames[0]
 
         output_path = "/tmp/output.mp4"
