@@ -62,42 +62,42 @@ class MultiGPUPredictor(BasePredictor):
         self,
         prompt: str = Input(
             description="The prompt to guide the video generation",
-            default="A cat walks on the grass, realistic",
+            default="A cat walks on the grass, realistic style",
         ),
         width: int = Input(
             description="Width of the video in pixels (must be divisible by 16)", 
-            default=960, ge=16, le=2520
+            default=864, ge=16
         ),
         height: int = Input(
             description="Height of the video in pixels (must be divisible by 16)",
-            default=544, ge=16, le=1420
+            default=480, ge=16
         ),
-        num_frames: int = Input(
+        video_length: int = Input(
             description="Number of frames to generate (must be 4k+1, ex: 49 or 129)",
-            default=61, ge=5, le=329
+            default=129, ge=1
         ),
-        num_inference_steps: int = Input(
+        infer_steps: int = Input(
             description="Number of denoising steps",
-            default=30, ge=1, le=50
+            default=50, ge=1
         ),
-        guidance_scale: float = Input(
+        embedded_guidance_scale: float = Input(
             description="Guidance scale",
             default=6.0, ge=1.0, le=10.0
         ),
         fps: int = Input(
             description="Frames per second of the output video",
-            default=15, ge=1, le=30
+            default=24, ge=1
         ),
         seed: int = Input(
-            description="Random seed (0 for random)",
-            default=0
+            description="Random seed (leave empty for random)",
+            default=None
         ),
     ) -> Path:
-        if seed <= 0:
+        if seed is None:
             seed = int.from_bytes(os.urandom(2), "big")
         print(f"Using seed: {seed}")
 
-        # enforce constraints on width, height, and num_frames
+        # enforce constraints on width, height, and video_length
         if width % 16 != 0:
             new_width = (width // 16 + 1) * 16
             print(f"Warning: width {width} is not divisible by 16, rounding up to {new_width}")
@@ -106,23 +106,24 @@ class MultiGPUPredictor(BasePredictor):
             new_height = (height // 16 + 1) * 16
             print(f"Warning: height {height} is not divisible by 16, rounding up to {new_height}")
             height = new_height
-        if num_frames % 4 != 1:
-            new_num_frames = (num_frames // 4 + 1) * 4 + 1
-            print(f"Warning: num_frames {num_frames} is not divisible by 4, rounding up to {new_num_frames}")
-            num_frames = new_num_frames
+        if video_length % 4 != 1:
+            new_video_length = (video_length // 4 + 1) * 4 + 1
+            print(f"Warning: video_length {video_length} is not divisible by 4, rounding up to {new_video_length}")
+            video_length = new_video_length
 
         save_path = f"output_{seed}.mp4"
         predict_args = {
             "prompt": prompt,
             "height": height,
             "width": width,
-            "num_frames": num_frames,
-            "num_inference_steps": num_inference_steps,
-            "guidance_scale": guidance_scale,
+            "num_frames": video_length,
+            "num_inference_steps": infer_steps,
+            "guidance_scale": embedded_guidance_scale,
             "seed": seed,
             "fps": fps,
             "save_path": save_path
         }
+        print(f"Predict args: {predict_args}")
 
         # send the predict args to each worker
         for rank in range(WORLD_SIZE):

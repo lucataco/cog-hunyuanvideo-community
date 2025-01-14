@@ -10,7 +10,7 @@ from enum import Enum
 from para_attn.context_parallel import init_context_parallel_mesh
 from para_attn.context_parallel.diffusers_adapters import parallelize_pipe
 from para_attn.parallel_vae.diffusers_adapters import parallelize_vae
-# from para_attn.first_block_cache.diffusers_adapters import apply_cache_on_pipe
+from para_attn.first_block_cache.diffusers_adapters import apply_cache_on_pipe
 
 class InferenceWorkerStatus(Enum):
     GOOD = "GOOD"
@@ -46,6 +46,11 @@ def inference_worker(
     os.environ['LOCAL_RANK'] = str(rank)
     torch.cuda.set_device(rank)
     dist.init_process_group(backend='nccl')
+
+    cache_threshold = os.environ.get("CACHE_THRESHOLD")
+    assert cache_threshold is not None, "CACHE_THRESHOLD must be set"
+    cache_threshold = float(cache_threshold)
+    print(f"Cache threshold: {cache_threshold}")
     
     transformer = HunyuanVideoTransformer3DModel.from_pretrained(
         model_cache,
@@ -66,7 +71,7 @@ def inference_worker(
     )
     pipe = parallelize_pipe(pipe, mesh=mesh)
     pipe.vae = parallelize_vae(pipe.vae, mesh=mesh._flatten())
-    # pipe = apply_cache_on_pipe(pipe, mesh)
+    pipe = apply_cache_on_pipe(pipe, residual_diff_threshold=cache_threshold)
     pipe.vae.enable_tiling()
 
     while True:
