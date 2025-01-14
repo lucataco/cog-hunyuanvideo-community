@@ -8,7 +8,8 @@ import torch
 import torch.multiprocessing as mp
 import subprocess
 from diffusers.utils import export_to_video
-
+import signal
+import sys
 from worker import inference_worker, InferenceWorkerStatus
 
 MODEL_CACHE = "checkpoints"
@@ -29,6 +30,17 @@ def download_weights(url, dest):
     print("downloading to: ", dest)
     subprocess.check_call(["pget", "-xf", url, dest], close_fds=False)
     print("downloading took: ", time.time() - start)
+
+
+
+# def handle_sigusr1(signum, frame):
+#     print(f"Received signal: {signum}")
+#     # Add your custom handling logic here
+#     # For example, clean up resources, log the event, etc.
+#     sys.exit(0)  # Optionally, exit the program
+# # Register the signal handler
+# signal.signal(signal.SIGUSR1, handle_sigusr1)
+
 
 class MultiGPUPredictor(BasePredictor):
     def setup(self) -> None:
@@ -57,6 +69,16 @@ class MultiGPUPredictor(BasePredictor):
             p = mp.Process(target=inference_worker, args=worker_args)
             p.start()
             self.processes.append(p)
+        
+        signal.signal(signal.SIGUSR1, self.handle_sigusr1)
+    
+    
+    def handle_sigusr1(self, signum, frame):
+        print(f"Received signal: {signum}")
+        # Add your custom handling logic here
+        # For example, clean up resources, log the event, etc.
+        sys.exit(0)  # Optionally, exit the program
+
 
     def predict(
         self,
